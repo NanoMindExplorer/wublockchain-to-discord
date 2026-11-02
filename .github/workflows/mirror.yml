@@ -1,0 +1,52 @@
+name: wublockchain-to-discord
+
+on:
+  schedule:
+    # restart the realtime mirror every 5 h (cancel-and-replace -> one live poller)
+    - cron: "0 */5 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "loop = realtime mirror | once = single snapshot (test)"
+        required: false
+        default: "loop"
+        type: choice
+        options: [loop, once]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wublockchain-to-discord
+  cancel-in-progress: true
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run mirror
+        env:
+          DC_WEBHOOK: ${{ secrets.DC_WEBHOOK }}
+          CHANNEL: ${{ secrets.CHANNEL }}
+          POLL_SECONDS: "30"
+        run: |
+          MODE="${{ inputs.mode || 'loop' }}"
+          if [ "$MODE" = "loop" ]; then
+            python3 mirror.py --loop 330
+          else
+            python3 mirror.py
+          fi
+
+      - name: Persist state (safety net)
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -n "$(git status --porcelain -- state.json)" ]; then
+            git config user.name "wu-mirror[bot]"
+            git config user.email "actions@users.noreply.github.com"
+            git add state.json
+            git commit -m "mirror state [skip ci]" || true
+            git push || (git pull --rebase && git push) || true
+          fi
