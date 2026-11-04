@@ -1,0 +1,19 @@
+name: diagnose-telegram
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - id: probe
+        run: |
+          CODE=$(curl -sL -o /tmp/page.html -w "%{http_code}" "https://t.me/s/wublockchainenglish" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+          SIZE=$(wc -c < /tmp/page.html)
+          NPOST=$(grep -c 'data-post="wublockchainenglish/' /tmp/page.html || true)
+          echo "http=$CODE bytes=$SIZE posts=$NPOST"
+          echo "http=$CODE bytes=$SIZE posts=$NPOST" >> "$GITHUB_STEP_SUMMARY"
+          head -c 400 /tmp/page.html | tr -d '\n' > /tmp/head.txt; echo; echo "HEAD: $(cat /tmp/head.txt)" 
+          grep -o 'data-post="wublockchainenglish/[0-9]*"' /tmp/page.html | tail -3 || echo "(no data-post found)"
