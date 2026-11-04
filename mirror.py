@@ -19,7 +19,7 @@ CHANNEL (default wublockchainenglish), POLL_SECONDS.
 import json, os, re, subprocess, sys, time, urllib.request, urllib.error
 import html as HTML
 
-CHANNEL = os.environ.get("CHANNEL", "wublockchainenglish")
+CHANNEL = os.environ.get("CHANNEL", "").strip() or "wublockchainenglish"
 WEBHOOK = os.environ.get("DC_WEBHOOK", "")
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(HERE, "state.json")
