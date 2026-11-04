@@ -79,7 +79,7 @@ def deliver(body_text, pid):
     """True only when Discord accepted (HTTP 200/204). Retries 429/5xx."""
     global POSTED, FAILED
     body = json.dumps({
-        "username": f"{CHANNEL} (Telegram)",
+        "username": os.environ.get("BOT_NAME", "Kabar Burung"),
         "content": body_text[:2000],
         "allowed_mentions": {"parse": []},
     }).encode()
@@ -160,7 +160,7 @@ def main():
     if not WEBHOOK:
         print("DC_WEBHOOK not set", file=sys.stderr)
         return 2
-    banner = {"username": f"{CHANNEL} (Telegram)",
+    banner = {"username": os.environ.get("BOT_NAME", "Kabar Burung"),
               "content": f"🟢 Mirror t.me/{CHANNEL} terhubung — berita baru masuk ke sini (source: https://t.me/s/{CHANNEL})"}
     state = load_state()
     lifetime = None
