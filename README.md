@@ -1,30 +1,27 @@
-# wublockchain-to-discord (+ Telegram Bahasa Indonesia)
+# wublockchain-to-discord (Bahasa Indonesia)
 
 Mirror berita Wu Blockchain dari channel Telegram publik
-[`wublockchainenglish`](https://t.me/s/wublockchainenglish) ke:
+[`wublockchainenglish`](https://t.me/s/wublockchainenglish) ke channel
+Discord — **dalam Bahasa Indonesia**.
 
-| Tujuan | Isi | Cara |
-|---|---|---|
-| **Discord** (webhook) | Teks asli (Inggris) | `DC_WEBHOOK` |
-| **Telegram** (channel) | **Auto-translate ke Bahasa Indonesia** | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` |
-
-Kedua tujuan independen: kalau salah satu belum diisi, yang lain tetap
-jalan. Satu postingan baru hanya ditandai "terkirim" setelah **semua**
-tujuan yang aktif menerimanya — kalau satu gagal, postingan itu dicoba
-lagi di siklus berikutnya tanpa duplikat (status per-tujuan dicatat di
-`state.json`).
+Postingan aslinya berbahasa Inggris; setiap berita di-auto-translate ke
+Bahasa Indonesia dulu, baru dikirim ke Discord (webhook `DC_WEBHOOK`,
+bot "Kabar Burung"). Jadi channel Discord menerima berita Wu Blockchain
+yang sudah berbahasa Indonesia.
 
 Berjalan di GitHub Actions (`mirror.yml`): polling tiap 30 detik, job
 di-restart tiap 5 jam. State (`state.json`, `last_post`) di-commit kembali
-ke repo supaya cursor tidak hilang saat job restart.
+ke repo supaya cursor tidak hilang saat job restart. Satu postingan baru
+hanya ditandai "terkirim" setelah Discord menerimanya (HTTP 200/204) —
+kalau gagal, dicoba lagi di siklus berikutnya tanpa duplikat.
 
 ## Terjemahan (kenapa akurat)
 
-Sumbernya berbahasa Inggris. Terjemahan ke Bahasa Indonesia dilakukan
-per paragraf, lalu melewati **glossary kripto** yang mengembalikan istilah
-yang biasa dirusak mesin penerjemah (ticker, nama proyek, jargon kripto
-tetap utuh; angka, tanggal, dan URL tidak disentuh). Kalau terjemahan
-gagal, teks asli tetap dikirim supaya beritanya tidak hilang.
+Terjemahan ke Bahasa Indonesia dilakukan per paragraf, lalu melewati
+**glossary kripto** yang mengembalikan istilah yang biasa dirusak mesin
+penerjemah (ticker, nama proyek, jargon kripto tetap utuh; angka, tanggal,
+dan URL tidak disentuh). Kalau terjemahan gagal, teks asli tetap dikirim
+supaya beritanya tidak hilang.
 
 - **Default (tanpa kunci):** Google Translate (endpoint gratis, tanpa
   API key). Sudah diuji pada berita asli — hasilnya natural, misal
@@ -33,49 +30,26 @@ gagal, teks asli tetap dikirim supaya beritanya tidak hilang.
   `4.2%` → `4,2%`, `50,000 ETH` → `50.000 ETH`.
 - **Opsional (lebih akurat):** DeepL free API (`DEEPL_API_KEY`). Kalau
   diisi, DeepL dipakai dulu; kalau DeepL gagal, otomatis jatuh ke Google.
-
-## Setup Telegram (5 menit)
-
-1. **Buat bot:** buka [@BotFather](https://t.me/BotFather) di Telegram →
-   `/newbot` → ikuti petunjuk → salin **token** bot-nya.
-2. **Buat / pilih channel Telegram** yang mau menerima berita (misal
-   channel baru khusus berita).
-3. **Jadikan bot admin channel itu:** buka channel → edit → Administrators
-   → tambahkan bot → beri izin **Post Messages**. (Tanpa ini bot tidak
-   bisa mengirim.)
-4. **Dapatkan Chat ID channel:**
-   - Kalau channel publik (`t.me/namachannel`): Chat ID-nya `@namachannel`.
-   - Kalau channel privat: kirim satu pesan ke channel, lalu buka
-     `https://api.telegram.org/bot<TOKEN>/getUpdates` dan cari
-     `"chat":{"id": -100xxxxxxxxxx}` — angka itu Chat ID-nya.
-5. **Tambahkan Secrets di GitHub:** repo → Settings → Secrets and
-   variables → Actions → New repository secret:
-   - `TELEGRAM_BOT_TOKEN` = token dari BotFather
-   - `TELEGRAM_CHAT_ID` = `@namachannel` atau `-100xxxxxxxxxx`
-   - `DEEPL_API_KEY` = (opsional) kunci DeepL free API
-   - `DC_WEBHOOK` = (sudah ada) webhook Discord, kalau mau tetap kirim ke Discord
-6. **Jalankan:** Actions → `wublockchain-to-discord` → Run workflow →
-   mode `once` untuk tes sekali, atau biarkan jadwal otomatis (tiap 5 jam).
+  Daftar gratis di [deepl.com](https://www.deepl.com/pro-api) (500rb
+  karakter/bulan, tanpa kartu kredit), lalu tambahkan sebagai Secret
+  `DEEPL_API_KEY` di repo → Settings → Secrets and variables → Actions.
 
 ## Menjalankan lokal
 
 ```bash
-export DC_WEBHOOK="https://discord.com/api/webhooks/..."   # opsional
-export TELEGRAM_BOT_TOKEN="123456:ABC..."                   # opsional
-export TELEGRAM_CHAT_ID="@namachannel"                      # opsional
+export DC_WEBHOOK="https://discord.com/api/webhooks/..."   # wajib
 export CHANNEL="wublockchainenglish"                        # default
+export TARGET_LANG="id"                                     # default
+export DEEPL_API_KEY="..."                                  # opsional
 python3 mirror.py --loop 330   # mirror realtime 330 menit
 python3 mirror.py              # sekali jalan (snapshot + keluar)
 ```
 
-Butuh minimal satu tujuan (Discord dan/atau Telegram). Tanpa keduanya,
-script berhenti dengan pesan error.
-
 ## File
 
-- `mirror.py` — polling + parsing + terjemahan + pengiriman (tanpa dependensi,
-  hanya stdlib Python).
-- `state.json` — cursor (`last_post`) + catatan pengiriman per postingan.
+- `mirror.py` — polling + parsing + terjemahan + pengiriman ke Discord
+  (tanpa dependensi, hanya stdlib Python).
+- `state.json` — cursor (`last_post`).
 - `.github/workflows/mirror.yml` — jadwal GitHub Actions.
 - `.github/workflows/diagnose.yml` — cek manual apakah halaman `t.me/s/…`
   masih bisa dibaca.
