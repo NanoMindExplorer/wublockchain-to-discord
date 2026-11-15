@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
-"""Public Telegram channel -> Discord webhook mirror (no bot admin needed).
+"""Wu Blockchain mirror: Telegram channel -> Discord (Bahasa Indonesia).
 
 Polls the public preview page https://t.me/s/<channel> and relays every NEW
 post to Discord as it appears (poll every POLL_SECONDS inside a long-lived
 job; cron restarts the job every 5 h for a 24/7 mirror).
+
+The source posts are in English; each post is AUTO-TRANSLATED to Indonesian
+(TARGET_LANG, default "id") before it is sent to Discord, so the Discord
+channel receives the news in Bahasa Indonesia.
+
+Translation (accuracy-first, no paid key required by default):
+  - DeepL free API when DEEPL_API_KEY is set (best accuracy).
+  - Otherwise Google Translate (keyless endpoint), chunked per paragraph,
+    then a crypto glossary pass that restores terms machine translation
+    commonly mangles (tickers, proper nouns, crypto jargon) and keeps
+    numbers / dates / URLs untouched. If translation fails, the original
+    text is sent so the news still arrives.
 
 State lives in state.json (last relayed message id). A post is marked
 relayed only after Discord accepted the message (HTTP 200/204) — failed
@@ -14,13 +26,16 @@ cursor survives downtime as long as fewer than ~20 posts arrive while the
 job is restarting.
 
 Env: DC_WEBHOOK (Discord webhook in the target channel), optional
-CHANNEL (default wublockchainenglish), POLL_SECONDS.
+CHANNEL (default wublockchainenglish), POLL_SECONDS, TARGET_LANG
+(default id), DEEPL_API_KEY (optional).
 """
-import json, os, re, subprocess, sys, time, urllib.request, urllib.error
+import json, os, re, subprocess, sys, time, urllib.request, urllib.error, urllib.parse
 import html as HTML
 
 CHANNEL = os.environ.get("CHANNEL", "").strip() or "wublockchainenglish"
 WEBHOOK = os.environ.get("DC_WEBHOOK", "")
+DEEPL_KEY = os.environ.get("DEEPL_API_KEY", "").strip()
+TARGET_LANG = os.environ.get("TARGET_LANG", "").strip() or "id"
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(HERE, "state.json")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "30"))
@@ -75,6 +90,106 @@ def load_state():
         return {}
 
 
+# ---------------------------------------------------------------- translation
+# Post-translation glossary: fixes terms Google Translate commonly mangles
+# in crypto news, restoring the form the Indonesian crypto community uses.
+# Applied as whole-word, case-insensitive replacements on the translated
+# text. (Tickers, proper nouns, numbers and URLs are already preserved by
+# the translator; this list only covers the known weak spots.)
+GLOSSARY = [
+    (r"\bpenurunan udara\b", "airdrop"),
+    (r"\bpenurunan\b", "airdrop"),          # bare "airdrop" mistranslated
+    (r"\bpaus\b", "whale"),
+    (r"\bpaus-paus\b", "whale"),
+    (r"\btaruhan\b", "staking"),
+    (r"\bmempertaruhkan\b", "staking"),
+    (r"\bpembakaran\b", "burn"),
+    (r"\bmembakar\b", "burn"),
+    (r"\bpencetakan\b", "mint"),
+    (r"\bmencetak\b", "mint"),
+    (r"\bpenambangan\b", "mining"),
+    (r"\bdompet\b", "wallet"),
+    (r"\bbanteng\b", "bullish"),
+    (r"\bberuang\b", "bearish"),
+    (r"\bpompa\b", "pump"),
+    (r"\btempat pembuangan\b", "dump"),
+    (r"\bketakutan, ketidakpastian, dan keraguan\b", "FUD"),
+    (r"\bpertukaran terdesentralisasi\b", "DEX"),
+    (r"\bpertukaran terpusat\b", "CEX"),
+    (r"\borganisasi otonom terdesentralisasi\b", "DAO"),
+    (r"\btoken yang tidak dapat dipertukarkan\b", "NFT"),
+    (r"\bkeuangan terdesentralisasi\b", "DeFi"),
+]
+
+
+def apply_glossary(text):
+    for pat, rep in GLOSSARY:
+        text = re.sub(pat, rep, text, flags=re.I)
+    return text
+
+
+def _google_translate_chunk(text, target):
+    data = urllib.parse.urlencode({
+        "client": "gtx", "sl": "auto", "tl": target, "dt": "t", "q": text,
+    }).encode()
+    req = urllib.request.Request(
+        "https://translate.googleapis.com/translate_a/single",
+        data=data, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        payload = json.load(r)
+    parts = []
+    for seg in payload[0] or []:
+        if seg and seg[0]:
+            parts.append(seg[0])
+    return "".join(parts)
+
+
+def translate_google(text, target):
+    """Keyless Google Translate, chunked per paragraph (<=1500 chars)."""
+    chunks, cur = [], ""
+    for line in text.split("\n"):
+        if len(cur) + len(line) + 1 > 1500 and cur:
+            chunks.append(cur)
+            cur = line
+        else:
+            cur = (cur + "\n" + line) if cur else line
+    if cur:
+        chunks.append(cur)
+    out = []
+    for c in chunks:
+        out.append(_google_translate_chunk(c, target))
+    return "\n".join(out)
+
+
+def translate_deepl(text, target):
+    data = urllib.parse.urlencode({
+        "auth_key": DEEPL_KEY, "text": text,
+        "target_lang": target.upper(),
+    }).encode()
+    req = urllib.request.Request("https://api-free.deepl.com/v2/translate",
+                                 data=data, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        payload = json.load(r)
+    return payload["translations"][0]["text"]
+
+
+def translate_to_id(text):
+    """English/any -> TARGET_LANG. Falls back to the original on failure."""
+    if not text or TARGET_LANG.lower() in ("en", "eng"):
+        return text
+    try:
+        if DEEPL_KEY:
+            try:
+                return apply_glossary(translate_deepl(text, TARGET_LANG))
+            except Exception as e:
+                print(f"deepl failed ({e}), falling back to google", file=sys.stderr)
+        return apply_glossary(translate_google(text, TARGET_LANG))
+    except Exception as e:
+        print(f"translation failed ({e}); sending original text", file=sys.stderr)
+        return text
+
+
+# ---------------------------------------------------------------- delivery
 def deliver(body_text, pid):
     """True only when Discord accepted (HTTP 200/204). Retries 429/5xx."""
     global POSTED, FAILED
@@ -116,8 +231,10 @@ def run_cycle(state):
         return state, True   # baseline → tell the caller to save+banner
     if fresh:
         for pid, body, iso in sorted(fresh):
-            stamp = f"\n\n[Wu Blockchain · Telegram — {iso[:16].replace('T', ' ')} UTC]({f'https://t.me/{CHANNEL}/{pid}'})"
-            if deliver(body + stamp, pid):
+            # terjemahkan ke Bahasa Indonesia dulu, baru kirim ke Discord
+            text_id = translate_to_id(body)
+            stamp = f"\n\n[Sumber: Wu Blockchain · Telegram — {iso[:16].replace('T', ' ')} UTC]({f'https://t.me/{CHANNEL}/{pid}'})"
+            if deliver(text_id + stamp, pid):
                 state["last_post"] = pid
                 # kecilkan gap antar post (limit webhook Discord ~5/3s)
                 time.sleep(1)
@@ -161,7 +278,7 @@ def main():
         print("DC_WEBHOOK not set", file=sys.stderr)
         return 2
     banner = {"username": os.environ.get("BOT_NAME", "Kabar Burung"),
-              "content": f"🟢 Mirror t.me/{CHANNEL} terhubung — berita baru masuk ke sini (source: https://t.me/s/{CHANNEL})"}
+              "content": f"🟢 Mirror t.me/{CHANNEL} terhubung — berita Wu Blockchain masuk ke sini dalam Bahasa Indonesia (sumber: https://t.me/s/{CHANNEL})"}
     state = load_state()
     lifetime = None
     if "--loop" in sys.argv:
